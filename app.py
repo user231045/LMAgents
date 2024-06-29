@@ -1,20 +1,19 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
-import requests
-from flask_cors import CORS
 from openai import OpenAI
-import threading
-import time
 import random
 import json
-import csv  # Import the CSV module
+import csv
+import threading
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
-CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Global token limit
 TOKEN_LIMIT = 2048
+
+# List to hold instantiated agents
+agents = []
 
 class LMStudioAgent:
     def __init__(self, name, api_url, api_key, model, temperature=0.7, starting_prompt=""):
@@ -34,11 +33,11 @@ class LMStudioAgent:
 
     def respond(self, message):
         self.history.append({"role": "user", "content": message})
-        
+
         # Calculate the number of tokens to include in the context
         context_tokens = int(TOKEN_LIMIT * 0.5)
         context = self._get_context(context_tokens)
-        
+
         completion = self.client.chat.completions.create(
             model=self.model,
             messages=context,
@@ -50,24 +49,12 @@ class LMStudioAgent:
         for chunk in completion:
             if chunk.choices[0].delta.content:
                 new_message["content"] += chunk.choices[0].delta.content
-                socketio.emit('new_message', {'role': self.name, 'content': new_message["content"]})
 
         self.history.append(new_message)
-        
-        # Save the final message to a CSV file
-        # try to save the message to a csv file, in case it fails, it will not break the code
-        try:
-            self.save_message_to_csv(new_message["content"])
-        except:
-            # if saving still fails, print an error message
-            print("Error saving message to CSV")
-            # skip the line and continue
-            pass
-        
         return new_message["content"]
 
     def _get_context(self, context_tokens):
-        # Create a context with the last `context_tokens` tokens
+        # Create a context with the last context_tokens tokens
         context = []
         total_tokens = 0
         for message in reversed(self.history):
@@ -86,7 +73,6 @@ class LMStudioAgent:
 def load_agents_from_config(config_file):
     with open(config_file, 'r') as f:
         config = json.load(f)
-    agents = []
     for agent_config in config:
         agent = LMStudioAgent(
             name=agent_config["name"],
@@ -97,37 +83,58 @@ def load_agents_from_config(config_file):
             starting_prompt=agent_config["starting_prompt"]
         )
         agents.append(agent)
-    return agents
 
-agents = load_agents_from_config('agents_config.json')
+load_agents_from_config('agents_config.json')
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+@app.route('/bots')
+def get_bots():
+    bot_names = [agent.name for agent in agents]
+    return jsonify(bot_names)
+
 @socketio.on('start_conversation')
 def handle_start_conversation(data):
     topic = data['topic']
-    socketio.emit('new_message', {'role': 'system', 'content': f"Starting conversation on topic: {topic}"})
+    bot_name = data['bot_name']
+    selected_agent = next((agent for agent in agents if agent.name == bot_name), None)
+    if selected_agent:
+        socketio.emit('new_message', {'role': 'system', 'content': f"Starting conversation with {bot_name} on topic: {topic}"})
+        selected_agent.reset_history()
+        selected_agent.history.append({"role": "user", "content": topic})
+        response = selected_agent.respond(topic)
+        socketio.emit('new_message', {'role': selected_agent.name, 'content': response})
+    else:
+        socketio.emit('new_message', {'role': 'system', 'content': "Bot not found."})
 
+@socketio.on('start_conversation_all')
+def handle_start_conversation_all(data):
+    topic = data['topic']
+    socketio.emit('new_message', {'role': 'system', 'content': f"Starting conversation with all bots on topic: {topic}"})
     for agent in agents:
         agent.reset_history()
         agent.history.append({"role": "user", "content": topic})
-
-    threading.Thread(target=run_conversation, args=(agents, topic)).start()
-
-def run_conversation(agents, initial_message, num_turns=15):
-    message = initial_message
-    last_agent = None
-    
-    for _ in range(num_turns):
-        available_agents = [agent for agent in agents if agent != last_agent]
-        agent = random.choice(available_agents)
-        response = agent.respond(message)
+        response = agent.respond(topic)
         socketio.emit('new_message', {'role': agent.name, 'content': response})
-        message = response
-        last_agent = agent
-        time.sleep(1)  # Add a delay between messages
+
+@socketio.on('random_topic')
+def handle_random_topic():
+    topic = get_random_topic()
+    if topic:
+        socketio.emit('new_message', {'role': 'system', 'content': f"Starting conversation on random topic: {topic}"})
+        for agent in agents:
+            agent.reset_history()
+            agent.history.append({"role": "user", "content": topic})
+            response = agent.respond(topic)
+            socketio.emit('new_message', {'role': agent.name, 'content': response})
+    else:
+        socketio.emit('new_message', {'role': 'system', 'content': "No topics available."})
+
+def get_random_topic():
+    topics = ["Technology", "Science", "Sports", "Movies", "Music", "Books", "Travel", "History", "Art", "Food", "Kdrama", "Drama", "AI", "School", "Coding", "Research", "People", "Vacation", "Languages", "Animals", "Eurovision", "Instagram", "Drugs", "Money", "Parties", "Influencers", "Gyms", "Laziness", "Holidays"]
+    return random.choice(topics)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)

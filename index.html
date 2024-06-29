@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Agent Chat</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Cambria, Courier, monospace;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: linear-gradient(120deg, #3a1c71, #d76d77, #ffaf7b);
+            color: #e0e0e0;
+        }
+        #chatRoom {
+            width: 600px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            border-radius: 30px;
+            border-color: white;
+            border-style: solid;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        #chat {
+            width: 90%;
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-radius: 30px;
+            padding: 10px;
+            color: #000;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 20px;
+            background: #3a1c71;
+            color: #fff;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        .message .username {
+            font-weight: bold;
+            color: #ffa500;
+            margin-right: 5px;
+        }
+        input, button, select {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: none;
+        }
+        input {
+            width: calc(100% - 70px);
+            border-radius: 30px;
+        }
+        button {
+            width: 40%;
+            background-color: #3a1c71;
+            color: white;
+            cursor: pointer;
+            border-radius: 30px;
+        }
+        select {
+            width: 100%;
+            border-radius: 30px;
+        }
+
+        #bot_select {
+            width: 80%;
+            border-radius: 30px;
+            color: #d76d77;
+        }
+
+        button:hover {
+            background-color: green;
+            transition: ease-in-out 0.5s;
+        }
+        h1 {
+            color: white;
+        }
+    </style>
+</head>
+<body>
+<div id="chatRoom">
+    <h1>Chat with Bots</h1>
+    <div id="chat"></div>
+    <input type="text" id="topic_input" placeholder="Enter a topic..." autocomplete="off"/>
+    <select id="bot_select">
+        <!-- Bot options will be populated here -->
+    </select>
+    <button onclick="startConversation()">Start Conversation</button>
+    <button onclick="randomTopic()">Random Topic</button>
+</div>
+<script>
+    let socket = io.connect('http://127.0.0.1:5000');
+    let messageContainers = {}; // Store containers for ongoing messages
+
+    socket.on('new_message', function(msg) {
+        let chat = document.getElementById('chat');
+
+        // Create a new message container for each new message
+        let messageContainer = document.createElement('div');
+        messageContainer.className = 'message';
+        messageContainer.innerHTML = `<span class="username">${msg.role}:</span> ${msg.content}`;
+        chat.appendChild(messageContainer);
+
+        // Scroll to the bottom of the chat
+        chat.scrollTop = chat.scrollHeight;
+    });
+
+    function startConversation() {
+        let input = document.getElementById('topic_input');
+        let topic = input.value;
+        let botSelect = document.getElementById('bot_select');
+        let botName = botSelect.value;
+
+        if (botName === "All Bots") {
+            socket.emit('start_conversation_all', {topic: topic});
+        } else {
+            socket.emit('start_conversation', {topic: topic, bot_name: botName});
+        }
+        input.value = '';
+    }
+
+    function randomTopic() {
+        socket.emit('random_topic');
+    }
+
+    // Fetch the list of bots and populate the select element
+    fetch('/bots')
+        .then(response => response.json())
+        .then(bots => {
+            let botSelect = document.getElementById('bot_select');
+            let allBotsOption = document.createElement('option');
+            allBotsOption.value = "All Bots";
+            allBotsOption.text = "All Bots";
+            botSelect.appendChild(allBotsOption);
+
+            bots.forEach(bot => {
+                let option = document.createElement('option');
+                option.value = bot;
+                option.text = bot;
+                botSelect.appendChild(option);
+            });
+        });
+</script>
+</body>
+</html>
